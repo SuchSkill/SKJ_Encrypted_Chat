@@ -9,7 +9,7 @@ import java.util.Map;
  * Created by Eugene on 10.12.2016.
  */
 public class MainServer {
-	public static void main(String[] args) {
+	public static void main(String[] args) throws InterruptedException {
 		// gniazdo do oczekiwania na dane
 		DatagramSocket socket = null;
 		// pakiet
@@ -47,6 +47,7 @@ public class MainServer {
 			//todo parse message
 			String[] splited = received.split(" ");
 			System.out.println(Arrays.toString(splited));
+			Thread.sleep(1000);
 			switch (splited[0]) {
 				case "Hi":
 					InetAddress ip = null;
@@ -63,7 +64,9 @@ public class MainServer {
 					break;
 				case "Give":
 					String message = getInfo(datebase.get(splited[1]));
+					System.out.println("msg to send: " + message);
 					byte[] bufor1 = message.getBytes();
+					System.out.println(packet.getAddress()+ " " + packet.getPort());
 					packet = new DatagramPacket(bufor1, bufor1.length, packet.getAddress(), packet.getPort());
 					sendPacket(socket, packet);
 					break;
@@ -87,7 +90,8 @@ public class MainServer {
 	private static String getInfo(ClientInfo clientInfo1) {
 		ClientInfo clientInfo = clientInfo1;
 		String key = clientInfo.getKey();
-		InetAddress ip1 = clientInfo.getIp();
+		String ip1 = clientInfo.getIp().getHostAddress();
+		System.out.println(ip1);
 		int port1 = clientInfo.getPort();
 		return key+ " " + ip1 + " " + port1;
 	}

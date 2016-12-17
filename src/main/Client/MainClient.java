@@ -9,19 +9,92 @@ import java.io.InputStreamReader;
 import java.net.*;
 import java.util.Arrays;
 import java.util.List;
+import java.util.*;
+import java.security.*;
+import java.security.spec.*;
+import javax.crypto.Cipher;
 
 public class MainClient {
-	private static DatagramPacket packet = null;
-	private static DatagramSocket socket;
+	private static DatagramSocket socketToServer;
+	private static DatagramSocket socketToFriend;
 	private static String myLabel;
 	private static String myKey;
 	private static InetAddress serverIp;
 	private static int servPort;
 	private static String myIpString;
 	private static int myPort;
-	private static ClientInfo targetUserInfo;
+	private static int myPortForMessages;
+	private static Key publicKey;
+	private static Key privateKey;
 	
-	public static void main(String[] args) {
+	public static void main(String[] args) throws Exception{
+		init(args);
+		
+		List<String> regOnServerMessage = Arrays.asList("Hi", myLabel, myKey, myIpString, myPortForMessages +"");
+		sendMessage(socketToServer, serverIp, servPort, regOnServerMessage);
+		
+		KeyPairGenerator kpairg = KeyPairGenerator.getInstance("RSA");
+		kpairg.initialize(1024);
+		KeyPair kpair = kpairg.genKeyPair();
+		publicKey = kpair.getPublic();
+		privateKey = kpair.getPrivate();
+		//Key factory, for key-key specification transformations
+		KeyFactory kfac = KeyFactory.getInstance("RSA");
+		//Generate plain-text key specification
+		RSAPublicKeySpec keyspec = kfac.getKeySpec(publicKey, RSAPublicKeySpec.class);
+		System.out.println("Public key, RSA modulus: " +
+				keyspec.getModulus() + "\n" +
+				"exponent: " +
+				keyspec.getPublicExponent() + "\n");
+		//Building public key from the plain-text specification
+		Key recoveredPublicFromSpec = kfac.generatePublic(keyspec);
+		//Encode a version of the public key in a byte-array
+		System.out.print("Public key encoded in " +
+				kpair.getPublic().getFormat() + " format: ");
+		byte[] encodedPublicKey = kpair.getPublic().getEncoded();
+		System.out.println(Arrays.toString(encodedPublicKey) + "\n");
+		
+		//Building public key from the byte-array
+		X509EncodedKeySpec ksp = new X509EncodedKeySpec(encodedPublicKey);
+		Key recoveredPublicFromArray = kfac.generatePublic(ksp);
+		// ---- Using RSA Cipher to encode simple messages ----
+		//Encoding using public key. Warning - ECB is unsafe.
+		String message = "Please encode me now!";
+		Cipher cipherEncode = Cipher.getInstance("RSA/ECB/PKCS1Padding");
+		cipherEncode.init(Cipher.ENCRYPT_MODE, publicKey);
+		byte[] encodedMessage = cipherEncode.doFinal(message.getBytes());
+		System.out.println("Encoded \"" + message + "\" as: " +
+				Arrays.toString(encodedMessage) + "\n");
+		//Decoding using private key
+		Cipher cipherDecode = Cipher.getInstance("RSA/ECB/PKCS1Padding");
+		cipherDecode.init(Cipher.DECRYPT_MODE, privateKey);
+		String decodedMessage = new
+				String(cipherDecode.doFinal(encodedMessage));
+		System.out.println("Decoded: " + decodedMessage);
+		
+		
+		
+		
+		
+		
+		new Thread(() -> {
+			waitForMessage();
+		}).start();
+		if(isUserWannaConnect()){
+			String userLabel = getUserInput("Please input name of User you want connect to");
+			ClientInfo targetUserInfo = askServerForUser(serverIp, servPort, myPort, userLabel);
+			
+			List<String> sayHi = Arrays.asList("Hi", myLabel);
+			sendMessage(socketToFriend, targetUserInfo.getIp(), targetUserInfo.getPort(), sayHi);
+			//starting chat
+			startingChat(targetUserInfo);
+			return;
+		}
+		
+//		socketToServer.close();
+	}
+	
+	private static void init(String[] args) throws SocketException {
 		myLabel = args[0];
 		System.out.println("CLIENT" + myLabel);
 		myKey = args[1];
@@ -30,54 +103,15 @@ public class MainClient {
 		InetAddress myIp = getIpByName(args[4]);
 		myIpString = args[4];
 		myPort = Integer.parseInt(args[5]);
-		
-		List<String> regOnServer = Arrays.asList("Hi", myLabel, myKey, myIpString, myPort +"");
-		sendMessage(myPort, serverIp, servPort, regOnServer);
-		
-		new Thread(() -> {
-			waitForMessage();
-		});
-		
-		if(isUserWannaConnect()){
-			String userLabel = getUserInput("Please input name of User you want connect to");
-			ClientInfo targetUserInfo = askServerForUser(serverIp, servPort, myPort, userLabel);
-			
-			List<String> sayHi = Arrays.asList("Hi", myLabel);
-			sendMessage(myPort, targetUserInfo.getIp(), targetUserInfo.getPort(), sayHi);
-			//starting chat
-			while (true) {
-				String inputedMessage = getUserInput("Enter message");
-				if (inputedMessage.equals("exit"))
-					System.exit(1);
-				List<String> msgToSend = Arrays.asList("msg:", inputedMessage);
-				
-				sendMessage(myPort, targetUserInfo.getIp(), targetUserInfo.getPort(), msgToSend);
-			}
-		}
-		
-		socket.close();
+		myPortForMessages = Integer.parseInt(args[6]);
+		socketToFriend = new DatagramSocket(myPortForMessages);
+		socketToServer = new DatagramSocket(myPort);
 	}
 	
 	private static ClientInfo askServerForUser(InetAddress serverIp, int servPort, int myPort, String userLabel) {
 		List<String> getInfo = Arrays.asList("Give", userLabel);
-		sendMessage(myPort, serverIp, servPort, getInfo);
+		sendMessage(socketToServer, serverIp, servPort, getInfo);
 		return getTargetUserInfo();
-	}
-	
-	private static ClientInfo getTargetUserInfo() {
-		String received = getMessage();
-		String[] splited = received.split(" ");
-		System.out.println(Arrays.toString(splited));
-		if (splited[0].equals("NoSuchUser"))
-			throw new IllegalReceiveException();
-		InetAddress ip = null;
-		try {
-			ip = InetAddress.getByName(splited[2]);
-		} catch (UnknownHostException e) {
-			e.printStackTrace();
-		}
-		int port = Integer.parseInt(splited[3]);
-		return new ClientInfo(splited[1], ip, port);
 	}
 	
 	private static InetAddress getIpByName(String arg) {
@@ -96,27 +130,43 @@ public class MainClient {
 	}
 	
 	private static void waitForMessage() {
-		String received = getMessage();
-		
-		String[] splited = received.split(" ");
-		System.out.println(Arrays.toString(splited));
-		switch (splited[0]) {
-			case "msg:":
-				System.out.println(Arrays.toString(splited));
-				
-				break;
-			case "hi":
-				targetUserInfo = askServerForUser(serverIp, servPort, myPort, splited[1]);
-				break;
+		System.out.println("------Waitformessage");
+		while (true) {
+			String received = getMessage(socketToFriend);
+			String[] splited = received.split(" ");
+			switch (splited[0]) {
+				case "msg:":
+					System.out.println(Arrays.toString(splited));
+					break;
+				case "Hi":
+					ClientInfo targetUserInfo = askServerForUser(serverIp, servPort, myPort, splited[1]);
+					new Thread(() -> startingChat(targetUserInfo)).start();
+					break;
+			}
 		}
 	}
 	
-	private static String getMessage() {
+	private static ClientInfo getTargetUserInfo() {
+		String received = getMessage(socketToServer);
+		String[] splited = received.split(" ");
+		System.out.println(Arrays.toString(splited));
+		if (splited[0].equals("NoSuchUser"))
+			throw new IllegalReceiveException();
+		InetAddress ip = null;
+		try {
+			ip = InetAddress.getByName(splited[1]);
+		} catch (UnknownHostException e) {
+			e.printStackTrace();
+		}
+		int port = Integer.parseInt(splited[2]);
+		return new ClientInfo(splited[0], ip, port);
+	}
+	
+	private static String getMessage(DatagramSocket socket) {
 		byte[] bufor = new byte[256];
-		packet = new DatagramPacket(bufor, bufor.length);
+		DatagramPacket packet = new DatagramPacket(bufor, bufor.length);
 		try{
-			if (true){}//avoid ide code error duplication(with server)
-			System.out.println("Czekam na pakiet");
+			System.out.println(Thread.currentThread().toString() + "Czekam na pakiet on " + socket.getPort());
 			// odbierz pakiet
 			socket.receive(packet);
 		} catch(IOException e) {
@@ -125,7 +175,7 @@ public class MainClient {
 		}
 		// wypisz co dostałeś
 		String received = new String(packet.getData(), 0, packet.getLength());
-		System.out.println("Odebrałem: " + received);
+		System.out.println(Thread.currentThread().toString() + "Odebrałem: " + received);
 		return received;
 	}
 	
@@ -153,23 +203,14 @@ public class MainClient {
 		return wannaConnect.equals("yes");
 	}
 	
-	private static void sendMessage(int fromPort, InetAddress serverAdress, int port, List<String> args) {
-		int serverPort = port;
-		
-		try {
-			System.out.println("Próbuję utowrzyć gniazdo");
-			socket = new DatagramSocket(fromPort);
-			System.out.println("Gniazdo utworzone");
-		} catch(SocketException e) {
-			System.err.println("Błąd przy tworzeniu gniazda: " + e);
-			System.exit(1);
-		}
+	private static void sendMessage(DatagramSocket socket, InetAddress serverAdress, int serverPort, List<String> args) {
+				
 		String messageToSend = "";
 		for (String arg : args) {
 			messageToSend += arg + " ";
 		}
 		byte[] bufor = messageToSend.getBytes();
-		packet = new DatagramPacket(bufor, bufor.length, serverAdress, serverPort);
+		DatagramPacket packet = new DatagramPacket(bufor, bufor.length, serverAdress, serverPort);
 		// wyślij pakiet
 		try {
 			System.out.println("Próbuję wysłać pakiet");
@@ -191,6 +232,17 @@ public class MainClient {
 		} catch(IOException e) {
 			System.err.println("Problem z odesłaniem pakietu: " + e);
 			System.exit(1);
+		}
+	}
+	
+	private static void startingChat(ClientInfo targetUserInfo) {
+		while (true) {
+			String inputedMessage = getUserInput("Enter message");
+			if (inputedMessage.equals("exit"))
+				System.exit(1);
+			List<String> msgToSend = Arrays.asList("msg: ", inputedMessage);
+			System.out.println("Sending packet to " + targetUserInfo.getIp() + " port "+ targetUserInfo.getPort() + " msgToSend " + msgToSend);
+			sendMessage(socketToFriend, targetUserInfo.getIp(), targetUserInfo.getPort(), msgToSend);
 		}
 	}
 }
