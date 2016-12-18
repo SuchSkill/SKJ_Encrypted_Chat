@@ -1,12 +1,13 @@
-package main.Server;
+package project.main.Server;
 
 import java.net.InetAddress;
+import java.security.Key;
 
 /**
  * Created by Eugene on 11.12.2016.
  */
 public class ClientInfo {
-	private String key;
+	private Key key;
 	private InetAddress ip;
 	private int port;
 	
@@ -19,11 +20,11 @@ public class ClientInfo {
 				'}';
 	}
 	
-	public String getKey() {
+	public Key getKey() {
 		return key;
 	}
 	
-	public void setKey(String key) {
+	public void setKey(Key key) {
 		this.key = key;
 	}
 	
@@ -43,7 +44,7 @@ public class ClientInfo {
 		this.port = port;
 	}
 	
-	public ClientInfo(String key, InetAddress ip, int port) {
+	public ClientInfo(Key key, InetAddress ip, int port) {
 	
 		this.key = key;
 		this.ip = ip;
