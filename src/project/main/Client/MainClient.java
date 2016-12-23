@@ -3,19 +3,21 @@ package project.main.Client;
 import com.sun.nio.sctp.IllegalReceiveException;
 import project.main.Server.ClientInfo;
 
+import javax.crypto.BadPaddingException;
+import javax.crypto.Cipher;
+import javax.crypto.IllegalBlockSizeException;
+import javax.crypto.NoSuchPaddingException;
 import java.io.BufferedReader;
 import java.io.IOException;
 import java.io.InputStreamReader;
 import java.math.BigInteger;
 import java.net.*;
+import java.security.*;
+import java.security.spec.InvalidKeySpecException;
+import java.security.spec.RSAPublicKeySpec;
+import java.security.spec.X509EncodedKeySpec;
 import java.util.Arrays;
 import java.util.List;
-import java.security.*;
-import java.security.spec.*;
-import javax.crypto.BadPaddingException;
-import javax.crypto.Cipher;
-import javax.crypto.IllegalBlockSizeException;
-import javax.crypto.NoSuchPaddingException;
 
 public class MainClient {
 	private static DatagramSocket socketToServer;
@@ -66,16 +68,16 @@ public class MainClient {
 //			waitForMessage();
 //		}).start();
 //
-//		if(isUserWannaConnect()){
-//			String userLabel = getUserInput("Please input name of User you want connect to");
-//			ClientInfo targetUserInfo = askServerForUser(serverIp, servPort, myPort, userLabel);
-//
-//			List<String> sayHi = Arrays.asList("Hi", myLabel);
-//			sendMessage(socketToFriend, targetUserInfo.getIp(), targetUserInfo.getPort(), sayHi);
-//			//starting chat
-//			startingChat(targetUserInfo);
-//			return;
-//		}
+		if(isUserWannaConnect()){
+			String userLabel = getUserInput("Please input name of User you want connect to");
+			ClientInfo targetUserInfo = askServerForUser(serverIp, servPort, myPort, userLabel);
+
+			List<String> sayHi = Arrays.asList("Hi", myLabel);
+			sendMessage(socketToFriend, targetUserInfo.getIp(), targetUserInfo.getPort(), sayHi);
+			//starting chat
+			startingChat(targetUserInfo);
+			return;
+		}
 	}
 	
 	private static byte[] mergeByteArrays(byte[] one, byte[] two) {
@@ -156,11 +158,11 @@ public class MainClient {
 		socketToServer = new DatagramSocket(myPort);
 	}
 	
-//	private static ClientInfo askServerForUser(InetAddress serverIp, int servPort, int myPort, String userLabel) {
-//		List<String> getInfo = Arrays.asList("Give", userLabel);
-//		sendMessage(socketToServer, serverIp, servPort, getInfo);
-//		return getTargetUserInfo();
-//	}
+	private static ClientInfo askServerForUser(InetAddress serverIp, int servPort, int myPort, String userLabel) {
+		List<String> getInfo = Arrays.asList("Give", userLabel);
+		sendMessage(socketToServer, serverIp, servPort, getInfo);
+		return getTargetUserInfo();
+	}
 	
 	private static InetAddress getIpByName(String arg) {
 		try {
@@ -194,21 +196,21 @@ public class MainClient {
 //		}
 //	}
 	
-//	private static ClientInfo getTargetUserInfo() {
-//		String received = getMessage(socketToServer);
-//		String[] splited = received.split(" ");
-//		System.out.println(Arrays.toString(splited));
-//		if (splited[0].equals("NoSuchUser"))
-//			throw new IllegalReceiveException();
-//		InetAddress ip = null;
-//		try {
-//			ip = InetAddress.getByName(splited[1]);
-//		} catch (UnknownHostException e) {
-//			e.printStackTrace();
-//		}
-//		int port = Integer.parseInt(splited[2]);
-//		return new ClientInfo(splited[0], ip, port);
-//	}
+	private static ClientInfo getTargetUserInfo() {
+		String received = getMessage(socketToServer);
+		String[] splited = received.split(" ");
+		System.out.println(Arrays.toString(splited));
+		if (splited[0].equals("NoSuchUser"))
+			throw new IllegalReceiveException();
+		InetAddress ip = null;
+		try {
+			ip = InetAddress.getByName(splited[1]);
+		} catch (UnknownHostException e) {
+			e.printStackTrace();
+		}
+		int port = Integer.parseInt(splited[2]);
+		return new ClientInfo(publicKey, ip, port);
+	}
 	
 	private static String getMessage(DatagramSocket socket) {
 		byte[] bufor = new byte[256];
