@@ -3,44 +3,75 @@ package project.main.Client;
 import com.sun.nio.sctp.IllegalReceiveException;
 import project.main.Server.ClientInfo;
 
-import javax.crypto.BadPaddingException;
 import javax.crypto.Cipher;
-import javax.crypto.IllegalBlockSizeException;
-import javax.crypto.NoSuchPaddingException;
 import java.io.BufferedReader;
 import java.io.IOException;
+import java.io.InputStream;
 import java.io.InputStreamReader;
 import java.math.BigInteger;
 import java.net.*;
 import java.security.*;
 import java.security.spec.InvalidKeySpecException;
 import java.security.spec.RSAPublicKeySpec;
-import java.security.spec.X509EncodedKeySpec;
 import java.util.Arrays;
+import java.util.HashMap;
 import java.util.List;
+import java.util.Map;
 
 public class MainClient {
 	private static DatagramSocket socketToServer;
 	private static DatagramSocket socketToFriend;
 	private static String myLabel;
-	private static String myKey;
 	private static InetAddress serverIp;
 	private static int servPort;
 	private static String myIpString;
-	private static int myPort;
 	private static int myPortForMessages;
 	private static Key publicKey;
 	private static Key privateKey;
 	private static KeyFactory kfac;
-	private static byte[] myEncodedPublicKey;
+	private static Map<String, ClientInfo> friendList;
 	
 	public static void main(String[] args) throws Exception{
 		init(args);
 		initEncription();
-		getPublicKeyFromEncoded(myEncodedPublicKey);
+		regOnServ();
+		
+		startRecivingMessageThread();
+		
+		if(isUserWannaConnect()){
+			String userLabel = getUserInput("Please input name of User you want connect to");
+			ClientInfo targetUserInfo = askServerForUser(serverIp, servPort, userLabel);
+			friendList.put(userLabel, targetUserInfo);
+			sayHi(targetUserInfo);
+			//starting chat loop
+			startingChat(userLabel);
+		}
+	}
+	
+	private static void startRecivingMessageThread() {
+		new Thread(() -> {
+			try {
+				waitForMessage();
+			} catch (Exception e) {
+				e.printStackTrace();
+			}
+		}).start();
+	}
+	
+	private static void sayHi(ClientInfo targetUserInfo) throws Exception{
+		System.out.println("Saying hi to ");
+		System.out.println(targetUserInfo.getIp());
+		System.out.println(targetUserInfo.getPort());
+		String sayHi = "Hi " + myLabel;
+		byte[] encriptedHi = encryptMessage(sayHi, targetUserInfo.getKey());
+		sendEncodedMessage(socketToFriend, targetUserInfo.getIp(), targetUserInfo.getPort(), encriptedHi);
+	}
+	
+	private static void regOnServ() throws Exception{
 		RSAPublicKeySpec keyspec = kfac.getKeySpec(publicKey, RSAPublicKeySpec.class);
 		
-		List<String> regOnServerMessage = Arrays.asList("Hi", myLabel, keyspec.getModulus().toString(), keyspec.getPublicExponent().toString());
+		List<String> regOnServerMessage = Arrays.asList("Hi", myLabel,
+				keyspec.getModulus().toString(), keyspec.getPublicExponent().toString());
 		
 		sendMessage(socketToServer, serverIp, servPort, regOnServerMessage);
 		
@@ -59,31 +90,16 @@ public class MainClient {
 		byte[] info = encryptMessage(s , serverPublicKey);
 		byte[] b2 = mergeByteArrays(encodedMessageRandom, info);
 		
-		String pubKey = concatMessage(Arrays.asList(keyspec.getModulus().toString(), keyspec.getPublicExponent().toString()));
+		String pubKey = concatMessage(Arrays.asList(keyspec.getModulus().toString(),
+				keyspec.getPublicExponent().toString()));
 		byte[] b3 = mergeByteArrays(b2, pubKey.getBytes());
 		sendEncodedMessage(socketToServer, serverIp, servPort, b3);
 		System.out.println("Secure reg on server finished");
-		
-//		new Thread(() -> {
-//			waitForMessage();
-//		}).start();
-//
-		if(isUserWannaConnect()){
-			String userLabel = getUserInput("Please input name of User you want connect to");
-			ClientInfo targetUserInfo = askServerForUser(serverIp, servPort, myPort, userLabel);
-
-			List<String> sayHi = Arrays.asList("Hi", myLabel);
-			sendMessage(socketToFriend, targetUserInfo.getIp(), targetUserInfo.getPort(), sayHi);
-			//starting chat
-			startingChat(targetUserInfo);
-			return;
-		}
 	}
 	
 	private static byte[] mergeByteArrays(byte[] one, byte[] two) {
 		byte[] combined = new byte[one.length + two.length];
-		
-		System.arraycopy(one,0,combined,0         ,one.length);
+		System.arraycopy(one,0,combined,0,one.length);
 		System.arraycopy(two,0,combined,one.length,two.length);
 		return combined;
 	}
@@ -116,21 +132,18 @@ public class MainClient {
 		publicKey = kpair.getPublic();
 		privateKey = kpair.getPrivate();
 		//Encode a version of the public key in a byte-array
-		myEncodedPublicKey = kpair.getPublic().getEncoded();
 		//Key factory, for key-key specification transformations
 		kfac = KeyFactory.getInstance("RSA");
 	}
 	
-	private static String decryptMessageWithPrivateKey(byte[] encodedMessage) throws NoSuchAlgorithmException, NoSuchPaddingException, InvalidKeyException, IllegalBlockSizeException, BadPaddingException {
+	private static String decryptMessageWithPrivateKey(byte[] encodedMessage) throws Exception{
 		//Decoding using private key
 		Cipher cipherDecode = Cipher.getInstance("RSA/ECB/PKCS1Padding");
 		cipherDecode.init(Cipher.DECRYPT_MODE, privateKey);
-		String decodedMessage = new
-		String(cipherDecode.doFinal(encodedMessage));
-		return decodedMessage;
+		return new	String(cipherDecode.doFinal(encodedMessage));
 	}
 	
-	private static byte[] encryptMessage(String message, Key key) throws NoSuchAlgorithmException, NoSuchPaddingException, InvalidKeyException, IllegalBlockSizeException, BadPaddingException {
+	private static byte[] encryptMessage(String message, Key key) throws Exception{
 		// ---- Using RSA Cipher to encode simple messages ----
 		//Encoding using public key. Warning - ECB is unsafe.
 		Cipher cipherEncode = Cipher.getInstance("RSA/ECB/PKCS1Padding");
@@ -138,29 +151,25 @@ public class MainClient {
 		return cipherEncode.doFinal(message.getBytes());
 	}
 	
-	private static Key getPublicKeyFromEncoded(byte[] encodedPublicKey) throws InvalidKeySpecException {
-		//Building public key from the byte-array
-		X509EncodedKeySpec ksp = new X509EncodedKeySpec(encodedPublicKey);
-		return kfac.generatePublic(ksp);
-	}
 	
 	private static void init(String[] args) throws SocketException {
 		myLabel = args[0];
 		System.out.println("CLIENT " + myLabel);
-		myKey = args[1];
-		serverIp = getIpByName(args[2]);
-		servPort = Integer.parseInt(args[3]);
-		InetAddress myIp = getIpByName(args[4]);
-		myIpString = args[4];
-		myPort = Integer.parseInt(args[5]);
-		myPortForMessages = Integer.parseInt(args[6]);
+		serverIp = getIpByName(args[1]);
+		servPort = Integer.parseInt(args[2]);
+		myIpString = args[3];
+		int myPort = Integer.parseInt(args[4]);
+		myPortForMessages = Integer.parseInt(args[5]);
 		socketToFriend = new DatagramSocket(myPortForMessages);
 		socketToServer = new DatagramSocket(myPort);
+		friendList = new HashMap<>();
 	}
 	
-	private static ClientInfo askServerForUser(InetAddress serverIp, int servPort, int myPort, String userLabel) {
+	private static ClientInfo askServerForUser(InetAddress serverIp, int serverPort, String userLabel)
+			throws InvalidKeySpecException {
 		List<String> getInfo = Arrays.asList("Give", userLabel);
-		sendMessage(socketToServer, serverIp, servPort, getInfo);
+		System.out.println("Give " + userLabel);
+		sendMessage(socketToServer, serverIp, serverPort, getInfo);
 		return getTargetUserInfo();
 	}
 	
@@ -179,24 +188,39 @@ public class MainClient {
 		return null;
 	}
 	
-//	private static void waitForMessage() {
-//		System.out.println("------Waitformessage");
-//		while (true) {
-//			String received = getMessage(socketToFriend);
-//			String[] splited = received.split(" ");
-//			switch (splited[0]) {
-//				case "msg:":
-//					System.out.println(Arrays.toString(splited));
-//					break;
-//				case "Hi":
-//					ClientInfo targetUserInfo = askServerForUser(serverIp, servPort, myPort, splited[1]);
-//					new Thread(() -> startingChat(targetUserInfo)).start();
-//					break;
-//			}
-//		}
-//	}
+	private static void waitForMessage() throws Exception {
+		while (true) {
+			DatagramPacket rowDatagramPacket = getRowDatagramPacket(socketToFriend, 128);
+			String received = decryptMessageWithPrivateKey(rowDatagramPacket.getData());
+			String[] splited = received.split(" ");
+			switch (splited[0]) {
+				case "msg:":
+					System.out.println(Arrays.toString(splited));
+					if(splited[1].equals("newKeys")){
+						Thread.sleep(500);
+						System.out.println("friend info updated");
+						String userLabel1 = splited[2];
+						friendList.put(userLabel1, askServerForUser(serverIp, servPort, userLabel1));
+					}
+					break;
+				case "Hi":
+					String userLabel = splited[1];
+					ClientInfo targetUserInfo = askServerForUser(serverIp, servPort, userLabel);
+					friendList.put(userLabel, targetUserInfo);
+					System.out.println("Starting new chatting thread with " + userLabel);
+					new Thread(() -> {
+						try {
+							startingChat(userLabel);
+						} catch (Exception e) {
+							e.printStackTrace();
+						}
+					}).start();
+					break;
+			}
+		}
+	}
 	
-	private static ClientInfo getTargetUserInfo() {
+	private static ClientInfo getTargetUserInfo() throws InvalidKeySpecException {
 		String received = getMessage(socketToServer);
 		String[] splited = received.split(" ");
 		System.out.println(Arrays.toString(splited));
@@ -204,16 +228,26 @@ public class MainClient {
 			throw new IllegalReceiveException();
 		InetAddress ip = null;
 		try {
-			ip = InetAddress.getByName(splited[1]);
+			ip = InetAddress.getByName(splited[0]);
 		} catch (UnknownHostException e) {
 			e.printStackTrace();
 		}
-		int port = Integer.parseInt(splited[2]);
-		return new ClientInfo(publicKey, ip, port);
+		int port = Integer.parseInt(splited[1]);
+		Key key = getKeyFromSpec(splited[2], splited[3]);
+		
+		return new ClientInfo(key, ip, port);
 	}
 	
 	private static String getMessage(DatagramSocket socket) {
-		byte[] bufor = new byte[256];
+		DatagramPacket packet = getRowDatagramPacket(socket, 1024);
+		// wypisz co dostałeś
+		String received = new String(packet.getData(), 0, packet.getLength());
+//		System.out.println(Thread.currentThread().toString() + "Odebrałem: " + received);
+		return received;
+	}
+	
+	private static DatagramPacket getRowDatagramPacket(DatagramSocket socket, int buffSize) {
+		byte[] bufor = new byte[buffSize];
 		DatagramPacket packet = new DatagramPacket(bufor, bufor.length);
 		try{
 			// odbierz pakiet
@@ -222,15 +256,13 @@ public class MainClient {
 			System.err.println("Błąd przy odbieraniu pakietu: " + e);
 			System.exit(1);
 		}
-		// wypisz co dostałeś
-		String received = new String(packet.getData(), 0, packet.getLength());
-		System.out.println(Thread.currentThread().toString() + "Odebrałem: " + received);
-		return received;
+		return packet;
 	}
 	
 	private static String getUserInput(String messageToUser) {
 		System.out.println(messageToUser);
-		BufferedReader br = new BufferedReader(new InputStreamReader(System.in));
+		InputStream in = System.in;
+		BufferedReader br = new BufferedReader(new InputStreamReader(in));
 		String message = "";
 		try {
 			return br.readLine();
@@ -252,10 +284,10 @@ public class MainClient {
 		return wannaConnect.equals("yes");
 	}
 	
-	private static void sendEncodedMessage(DatagramSocket socket, InetAddress serverAdress, int serverPort, byte... messages) {
+	private static void sendEncodedMessage(DatagramSocket socket, InetAddress serverAdress,
+	                                       int serverPort, byte... messages) {
 		DatagramPacket packet = new DatagramPacket(messages, messages.length, serverAdress, serverPort);
 		trySendPacket(socket, packet);
-		
 	}
 	
 	private static void trySendPacket(DatagramSocket socket, DatagramPacket packet) {
@@ -268,7 +300,8 @@ public class MainClient {
 		}
 	}
 	
-	private static void sendMessage(DatagramSocket socket, InetAddress serverAdress, int serverPort, List<String> args) {
+	private static void sendMessage(DatagramSocket socket, InetAddress serverAdress,
+	                                int serverPort, List<String> args) {
 		String messageToSend = concatMessage(args);
 		
 		byte[] bufor = messageToSend.getBytes();
@@ -286,28 +319,23 @@ public class MainClient {
 	}
 	
 	
-	
-	private static void sendPacket(DatagramSocket socket, DatagramPacket packet) {
-		try{
-			if (true)
-			System.out.println("Próbuję odesłać pakiet");
-			// odeślij go do odbiorcy
-			socket.send(packet);
-			System.out.println("Odesłano");
-		} catch(IOException e) {
-			System.err.println("Problem z odesłaniem pakietu: " + e);
-			System.exit(1);
-		}
-	}
-	
-	private static void startingChat(ClientInfo targetUserInfo) {
-		while (true) {
+	private static void startingChat(String label) throws Exception {
+		while (!Thread.currentThread().isInterrupted()) {
 			String inputedMessage = getUserInput("Enter message");
 			if (inputedMessage.equals("exit"))
 				System.exit(1);
-			List<String> msgToSend = Arrays.asList("msg: ", inputedMessage);
-			System.out.println("Sending packet to " + targetUserInfo.getIp() + " port "+ targetUserInfo.getPort() + " msgToSend " + msgToSend);
-			sendMessage(socketToFriend, targetUserInfo.getIp(), targetUserInfo.getPort(), msgToSend);
+			ClientInfo clientInfo = friendList.get(label);
+			if (inputedMessage.equals("newKeys")){
+				initEncription();
+				regOnServ();
+				inputedMessage += " "+ myLabel;
+			}
+			byte[] encryptedMsg = encryptMessage("msg: "+ inputedMessage, clientInfo.getKey());
+			System.out.println("Sending packet to " + clientInfo.getIp()
+					+ " port "+ clientInfo.getPort() + " msgToSend " + inputedMessage);
+			sendEncodedMessage(socketToFriend, clientInfo.getIp(), clientInfo.getPort(), encryptedMsg);
+			
 		}
+		System.out.println("End of chatting thread");
 	}
 }

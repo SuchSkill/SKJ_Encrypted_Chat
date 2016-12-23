@@ -1,8 +1,5 @@
 package project.main.Server;
-import javax.crypto.BadPaddingException;
 import javax.crypto.Cipher;
-import javax.crypto.IllegalBlockSizeException;
-import javax.crypto.NoSuchPaddingException;
 import java.io.IOException;
 import java.math.BigInteger;
 import java.net.DatagramPacket;
@@ -12,7 +9,6 @@ import java.net.SocketException;
 import java.security.*;
 import java.security.spec.InvalidKeySpecException;
 import java.security.spec.RSAPublicKeySpec;
-import java.security.spec.X509EncodedKeySpec;
 import java.util.HashMap;
 import java.util.Map;
 import java.util.Random;
@@ -22,15 +18,12 @@ import java.util.Random;
  * Created by Eugene on 10.12.2016.
  */
 public class MainServer {
-	private static Key publicKey;
 	private static Key privateKey;
 	private static KeyFactory kfac;
-	private static byte[] encodedPublicKey;
 	private static RSAPublicKeySpec keyspec;
 	private static HashMap<String, Integer> regRequest;
 	private static DatagramSocket socket;
 	private static Map<String, ClientInfo> datebase;
-	private static DatagramPacket packet;
 	
 	public static void main(String[] args) throws Exception {
 		init();
@@ -38,8 +31,8 @@ public class MainServer {
 		
 		while (true) {
 			// utwórz pakiet dla odbierania danych
-			byte[] bufor = new byte[1024];
-			packet = new DatagramPacket(bufor, bufor.length);
+			byte[] bufor = new byte[2048];
+			DatagramPacket packet = new DatagramPacket(bufor, bufor.length);
 			try{
 				// odbierz pakiet
 				socket.receive(packet);
@@ -49,7 +42,6 @@ public class MainServer {
 			}
 			// wypisz co dostałeś
 			String received = new String(packet.getData(), 0, packet.getLength());
-			//todo parse message
 			String[] splited = received.split(" ");
 			Thread.sleep(100);
 			byte[] bufor1;
@@ -87,14 +79,19 @@ public class MainServer {
 					
 					
 					if(regRequest.get(decryptedInfoSplitted[0]) == Integer.parseInt(decryptedRandom)){
-						System.out.println("Added new client" + decryptedInfoSplitted[0]);
+						System.out.println("Added new client " + decryptedInfoSplitted[0] + " "
+								+ decryptedInfoSplitted[1] + " " + decryptedInfoSplitted[2]);
 						Key recoveredPublicFromSpec1 = getKeyFromSpec(pubKeySplitted[0], pubKeySplitted[1]);
-						ClientInfo clientInfo = new ClientInfo(recoveredPublicFromSpec1, InetAddress.getByName(decryptedInfoSplitted[1]),
+						ClientInfo clientInfo = new ClientInfo(recoveredPublicFromSpec1,
+								InetAddress.getByName(decryptedInfoSplitted[1]),
 								Integer.parseInt(decryptedInfoSplitted[2]));
 						datebase.put(decryptedInfoSplitted[0], clientInfo);
+						System.out.println(clientInfo);
+					}else{
+						regRequest.remove(decryptedInfoSplitted[0]);
+						System.out.println("Wrong validation for " + regRequest.get(decryptedInfoSplitted[0]));
 					}
 			}
-//			System.out.println("DATABASE" + datebase);
 		}
 		
 	}
@@ -129,19 +126,21 @@ public class MainServer {
 		return combined;
 	}
 	
-	private static byte[] getEncodedRandom(String label, Key recoveredPublicFromSpec) throws NoSuchAlgorithmException, NoSuchPaddingException, InvalidKeyException, IllegalBlockSizeException, BadPaddingException {
+	private static byte[] getEncodedRandom(String label, Key recoveredPublicFromSpec) throws Exception{
 		int randomInt = new Random().nextInt(1_000_000_000);
 		regRequest.put(label, randomInt);
 		return encryptMessage(randomInt+"", recoveredPublicFromSpec);
 	}
 	
-	private static String getInfo(ClientInfo clientInfo1) {
-		ClientInfo clientInfo = clientInfo1;
-		Key key = clientInfo.getKey();
-		String ip1 = clientInfo.getIp().getHostAddress();
+	private static String getInfo(ClientInfo clientInfo1) throws InvalidKeySpecException {
+		Key key = clientInfo1.getKey();
+		RSAPublicKeySpec keyspec = kfac.getKeySpec(key, RSAPublicKeySpec.class);
+		String ip1 = clientInfo1.getIp().getHostAddress();
 		System.out.println(ip1);
-		int port1 = clientInfo.getPort();
-		return key+ " " + ip1 + " " + port1;
+		int port1 = clientInfo1.getPort();
+		System.out.println(keyspec.getModulus().toString());
+		System.out.println(keyspec.getPublicExponent().toString());
+		return ip1 + " " + port1+ " " + keyspec.getModulus().toString() +" "+ keyspec.getPublicExponent().toString();
 	}
 	
 	
@@ -159,34 +158,25 @@ public class MainServer {
 		KeyPairGenerator kpairg = KeyPairGenerator.getInstance("RSA");
 		kpairg.initialize(1024);
 		KeyPair kpair = kpairg.genKeyPair();
-		publicKey = kpair.getPublic();
 		privateKey = kpair.getPrivate();
 		//Key factory, for key-key specification transformations
 		kfac = KeyFactory.getInstance("RSA");
 		//Encode a version of the public key in a byte-array
-		encodedPublicKey = kpair.getPublic().getEncoded();
-		keyspec = kfac.getKeySpec(publicKey, RSAPublicKeySpec.class);
+		keyspec = kfac.getKeySpec(kpair.getPublic(), RSAPublicKeySpec.class);
 		regRequest = new HashMap<>();
 	}
-	private static Key getPublicKeyFromEncoded(byte[] encodedPublicKey) throws InvalidKeySpecException {
-		//Building public key from the byte-array
-		X509EncodedKeySpec ksp = new X509EncodedKeySpec(encodedPublicKey);
-		return kfac.generatePublic(ksp);
-	}
-	private static byte[] encryptMessage(String message, Key key) throws NoSuchAlgorithmException, NoSuchPaddingException, InvalidKeyException, IllegalBlockSizeException, BadPaddingException {
+	private static byte[] encryptMessage(String message, Key key) throws Exception{
 		// ---- Using RSA Cipher to encode simple messages ----
 		//Encoding using public key. Warning - ECB is unsafe.
 		Cipher cipherEncode = Cipher.getInstance("RSA/ECB/PKCS1Padding");
 		cipherEncode.init(Cipher.ENCRYPT_MODE, key);
 		return cipherEncode.doFinal(message.getBytes());
 	}
-	private static String decryptMessageWithPrivateKey(byte[] encodedMessage) throws NoSuchAlgorithmException, NoSuchPaddingException, InvalidKeyException, IllegalBlockSizeException, BadPaddingException {
+	private static String decryptMessageWithPrivateKey(byte[] encodedMessage) throws Exception{
 		//Decoding using private key
 		Cipher cipherDecode = Cipher.getInstance("RSA/ECB/PKCS1Padding");
 		cipherDecode.init(Cipher.DECRYPT_MODE, privateKey);
-		String decodedMessage = new
-				String(cipherDecode.doFinal(encodedMessage));
-		return decodedMessage;
+		return new String(cipherDecode.doFinal(encodedMessage));
 	}
 	private static Key getKeyFromSpec(String s1, String s2) throws InvalidKeySpecException {
 		s2=s2.trim();
